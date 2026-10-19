@@ -1,0 +1,11 @@
+# ============================================================================
+# dsh-conversation-trash — bundle patch
+# ============================================================================
+# Inserts the plugin entry into the Web profile's loader tree when this
+# package is installed as a profile bundle. The installer also accepts a
+# plain `- insert:` row in the profile's own cordis.patch.yml.
+# ============================================================================
+
+- insert:
+    - id: session-trash
+      name: dsh-conversation-trash
