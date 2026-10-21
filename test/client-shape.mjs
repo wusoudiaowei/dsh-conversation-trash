@@ -75,7 +75,7 @@ const ctx = {
 
 moduleExports.apply(ctx);
 
-assert.equal(registered.length, 2);
+assert.equal(registered.length, 3);
 const menu = registered.find((entry) => entry.slot === "sidebar.workspaces.session.menu.item");
 const overlay = registered.find((entry) => entry.slot === "shell.overlay");
 assert.ok(menu !== undefined, "menu item registered");
@@ -83,6 +83,8 @@ assert.equal(menu.entry.spec.id, "trash-delete");
 assert.equal(menu.entry.spec.order, 500);
 assert.equal(typeof menu.entry.component, "function");
 assert.ok(overlay !== undefined, "overlay registered");
-assert.equal(overlay.entry.spec.id, "session-trash-overlay");
+const footer = registered.find((entry) => entry.slot === "sidebar.footer.action");
+assert.ok(footer !== undefined, "sidebar footer button registered");
+assert.equal(footer.entry.spec.id, "conversation-trash");
 
 console.log("client-shape: ok");
