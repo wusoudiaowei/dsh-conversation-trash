@@ -1,6 +1,6 @@
 {
   "name": "dsh-conversation-trash",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Recycle bin for DeepSeek Harness conversations: move a session to trash from the sidebar, undo for 8 seconds, restore or purge later. / DSH 对话回收站：侧边栏移入回收站、8 秒内撤销、随时恢复或彻底删除。",
   "license": "MIT",
   "type": "module",
@@ -18,7 +18,9 @@
     "lib",
     "cordis.patch.yml",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "docs"
   ],
   "keywords": [
     "dsh-plugin",
