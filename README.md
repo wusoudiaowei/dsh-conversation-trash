@@ -1,94 +1,104 @@
 # dsh-conversation-trash
 
-给 DSH Web 侧栏加一个**「删除对话」**：软删除进回收站，8 秒内可撤销，子代理会话级联删除，分叉保留。
+[![test](https://github.com/wusoudiaowei/dsh-conversation-trash/actions/workflows/test.yml/badge.svg)](https://github.com/wusoudiaowei/dsh-conversation-trash/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> 为什么需要插件：DSH 的会话域目前只有归档（`workspaceRegistry.archiveSession`），Host API、持久化层都没有删除原语，工作区删除的注释也明确写着“保留每一个会话日志”。所以这个功能不是加个按钮，而是一套「归档 + 移出会话目录 + 回收站索引」的组合动作。
+**A recycle bin for DeepSeek Harness conversations.** Delete a conversation from the
+sidebar, undo for 8 seconds, restore it or purge it later.
 
-## 安装
+DeepSeek Harness ships **archive** but no **delete**: its persistence layer exposes no
+deletion primitive and the Workspace registry keeps every session log on purpose.
+This plugin implements delete as a composition of supported operations — it never
+patches the host binary and never touches the log format.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+## Features
+
+- **Move to trash** from the session row's `…` menu (danger-styled, below *Archive*)
+- **Undo for 8 seconds** — a toast with an undo action, not a silent, irreversible delete
+- **Subagent cascade** — subagent sessions owned by the deleted session go with it
+- **Forks survive** — a fork is an independent conversation and is left alone
+- **Running work is stopped first** through the host's own archive path
+- **Recycle-bin panel** from a sidebar-footer button with a count badge: restore an
+  entry, delete one forever, or empty the bin
+- **Restore or purge** later; the trash lives at `~/.dsh/session-trash/`
+
+## Install
+
+```sh
+dsh plugin --profile desktop add github:wusoudiaowei/dsh-conversation-trash
 ```
 
-然后**完全退出 DSH**（托盘图标 → 退出）再启动。安装脚本会：
+Or copy this folder to `%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-conversation-trash`
+and add it to the profile's `dsh.profile.bundles`, then restart DSH.
+`install.ps1` does both steps on Windows and is idempotent.
 
-1. 把本包复制到 `%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-conversation-trash`
-2. 在 profile 的 `cordis.patch.yml` 里追加一条带标记的 loader 条目（原文件自动备份为 `.bak-时间戳`）
+## Usage
 
-卸载：
+1. Hover a conversation row in the sidebar and open the `…` menu
+2. Choose **删除对话 / Delete conversation**
+3. The dialog previews the title and how many subagent sessions go with it
+4. Confirm — the row leaves the list and a toast offers **Undo** for 8 seconds
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
-```
+## How it works
 
-## 用起来是什么样
-
-- 侧栏会话行 → 悬停 → `…` 菜单 → **删除对话**（危险色，排在归档下面）
-- 确认框会先向 Host 预检：会话标题、将被一起删除的子代理数量、正在运行的工作会被停止
-- 确认后：先 `archiveSession(id, { stopActivity: true })`（停掉在跑的工作、行立即从默认列表消失），再把 `~/.dsh/sessions/<工作区>/session-<id>/` 移到 `~/.dsh/session-trash/<id>/`，并写入索引
-- 右下角 toast：**已删除「标题」· 撤销**（8 秒）
-- 撤销 = 目录移回原处 + 取消归档
-
-## 数据在哪
-
-| 路径 | 内容 |
+| Step | What happens |
 |---|---|
-| `~/.dsh/session-trash/<session-id>/` | 被删除会话的原始日志目录 |
-| `~/.dsh/session-trash/index.json` | 条目：id、标题、父会话、删除时间、大小、是否已移动 |
-| `~/.dsh/sessions/<workspace>/session-<id>/` | 恢复后回到的位置 |
+| 1 | `workspaceRegistry.archiveSession(id, { stopActivity: true })` — stops running work and hides the row |
+| 2 | the session directory moves from `~/.dsh/sessions/<workspace>/<session-id>/` to `~/.dsh/session-trash/<session-id>/` |
+| 3 | an entry is written to `~/.dsh/session-trash/index.json` (atomic temp-file + rename) |
 
-彻底删除（purge）目前只暴露了 HTTP 接口（`POST /dsh-conversation-trash/purge`、`/purge-all`），还没有设置页入口——见「后续」。
+Restore moves the directory back and unarchives the session. Purge deletes it for good.
 
-## HTTP 接口
+Two Windows-specific details: the log file is often still open when the move runs, so
+the move retries with backoff and a failed attempt is recorded as `moved: false` and
+finished by a startup sweep; and the session id already carries its `session-` prefix,
+so the host normalizes ids at the boundary instead of re-deriving them.
 
-全部只接受 loopback Host、同源 Origin、`application/json` 的 POST（与官方 Web 插件同款 fence）：
+## HTTP surface
 
-| 方法 | 路径 | 作用 |
+Loopback-only, same-origin, `application/json` POSTs:
+
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/dsh-conversation-trash/list` | 回收站条目 + 总大小 |
-| POST | `/dsh-conversation-trash/preview` | `{sessionId}` → 标题、子代理 id 列表 |
+| GET | `/dsh-conversation-trash/list` | trash entries and total size |
+| POST | `/dsh-conversation-trash/preview` | `{sessionId}` → title, subagent ids |
 | POST | `/dsh-conversation-trash/delete` | `{sessionId, displayTitle}` |
-| POST | `/dsh-conversation-trash/restore` | `{sessionId}`（父会话会连同子代理一起恢复） |
-| POST | `/dsh-conversation-trash/purge` | `{sessionId}` 真删 |
-| POST | `/dsh-conversation-trash/purge-all` | 清空回收站 |
+| POST | `/dsh-conversation-trash/restore` | `{sessionId}` |
+| POST | `/dsh-conversation-trash/purge` | `{sessionId}` |
+| POST | `/dsh-conversation-trash/purge-all` | `{}` |
 
-## 实现要点
+## Tests
 
-**Host（`lib/index.mjs`）**
-
-- `ctx.get("workspaceRegistry").archiveSession(id, { stopActivity: true })` 负责停工作 + 隐藏行；未知会话静默跳过
-- 会话目录通过扫描 `~/.dsh/sessions/*/session-<id>` 定位，不依赖工作区目录名的编码规则
-- 级联：优先用 `ctx.sessionQuery.listSessions()`（能看到已落盘的会话）建父子图，退回 `ctx.sessions.list()`（只能看到活跃会话）
-- Windows 上日志文件可能仍被打开，`rename` 会 `EBUSY`：按 0/1.2/2.5/5/8/12 秒重试，仍失败则标记 `pending`，下次启动时 `sweep()` 补做（那时写入器还没附着）
-- 所有写操作走一条串行队列，索引文件用「临时文件 + rename」原子替换
-
-**Client（`lib/client.cjs`）**
-
-- 手写 `window.__ModuleLoader__.load({...})` 工厂，`require("react")` / `require("@deepseek-ai/dsh-client-ui-primitives")` 由平台模块表提供，无需构建
-- 注册 `sidebar.workspaces.session.menu.item`（`id: trash-delete`, `order: 500`）和 `shell.overlay`（确认框 + toast）
-- 中英文案按 `navigator.language` 切换
-
-## 测试
-
-```powershell
-node test/smoke.mjs          # host：临时的假 HOME + 假 ctx，跑 preview→delete→list→restore→purge 与 fence
-node test/client-shape.mjs   # client：bundle 注册、导出、两个 slot 的 id/order
-node test/dry-run.mjs        # 只读扫真实 ~/.dsh，确认能找到会话目录（不修改任何数据）
+```sh
+node test/smoke.mjs        # delete → list → restore → purge against a throwaway HOME
+node test/client-shape.mjs # the browser bundle registers the right slots
+node test/dry-run.mjs      # read-only pass over the real ~/.dsh (skips cleanly if none)
 ```
 
-面向使用者的分步说明见 [`使用说明.md`](./使用说明.md)。
+CI runs the first two on Windows.
 
-## 已知限制
+## Known limits
 
-- **删除后立刻重启前**，该会话仍会出现在「全部对话（显示已归档）」里（它已被归档、日志已移走）。重启后彻底消失。
-- **子代理级联**依赖会话摘要里的 `parentSession`；如果某个子代理从未落盘也没在内存里，删不到。
-- **删除当前正在看的会话**：行会消失、归档门会拦住新回合，但主区域不会自动跳走——原型阶段没接导航。
-- **回收站没有设置页**，`purge` 目前只能走 HTTP；下一步是在设置壳里加一节（图标位 `archived-sessions` 已预留）。
-- 属于社区扩展点用法：上游一旦把 `session/delete` 做进协议，这个插件应整体退役。
+- A deleted conversation still appears under *All conversations (show archived)* until
+  the next restart — it is archived and its log is already moved.
+- Deleting the conversation you are currently viewing does not navigate away.
+- Purging has no settings UI yet; use the HTTP route.
+- Relies on host internals (slot names, `archiveSession`, the log directory layout).
+  A future DSH release may break it; failures are visible, never destructive.
+- If upstream ever ships a real `session/delete`, this plugin should be retired.
 
-## 后续可做
+## Design notes
 
-1. 设置 → 回收站页面（列表、恢复、彻底删除、清空、显示占用大小）
-2. 删除后自动导航到最近会话
-3. 快捷键（`Ctrl+Shift+Backspace`）与命令面板入口
-4. 定时任务 / Goal 引用被删会话时先提示
+[`docs/design.md`](docs/design.md) walks through the constraints, the rejected
+alternatives, and the four bugs that shaped the implementation.
+
+## License
+
+MIT
+
+---
+
+## 中文摘要
+
+对话回收站：侧栏 `…` 菜单把会话移入回收站，8 秒内可撤销，之后可恢复或彻底删除；
+子代理会话随父会话一起删，分叉保留。详见 [`使用说明.md`](使用说明.md)。
